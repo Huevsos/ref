@@ -1,7 +1,12 @@
+import os
 import logging
 from typing import Dict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения
+load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
@@ -10,23 +15,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Хранение данных (в реальном проекте используйте базу данных)
-user_data = {}  # user_id: {'referrer_id': None, 'balance': 0, 'referrals': []}
+# Хранение данных (временное, для демо)
+user_data = {}
 
 class ReferralBot:
-    def __init__(self, token: str):
-        self.token = token
-        
+    def __init__(self):
+        self.token = os.getenv("BOT_TOKEN")
+        if not self.token:
+            raise ValueError("BOT_TOKEN not found in environment variables")
+    
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
         user = update.effective_user
         referral_code = None
         
-        # Проверяем реферальный код в аргументах
         if context.args:
             referral_code = context.args[0]
         
-        # Регистрируем пользователя
         if user.id not in user_data:
             user_data[user.id] = {
                 'referrer_id': int(referral_code) if referral_code and referral_code.isdigit() else None,
@@ -35,14 +40,12 @@ class ReferralBot:
                 'username': user.username
             }
             
-            # Если есть реферер, добавляем к его рефералам
             if referral_code and referral_code.isdigit():
                 referrer_id = int(referral_code)
                 if referrer_id in user_data:
                     user_data[referrer_id]['referrals'].append(user.id)
-                    user_data[referrer_id]['balance'] += 10  # Начисляем бонус
+                    user_data[referrer_id]['balance'] += 10
                     
-                    # Уведомляем реферера
                     try:
                         await context.bot.send_message(
                             chat_id=referrer_id,
@@ -51,7 +54,6 @@ class ReferralBot:
                     except:
                         pass
         
-        # Создаем клавиатуру с кнопками
         keyboard = [
             [InlineKeyboardButton("👥 Мои рефералы", callback_data='my_referrals')],
             [InlineKeyboardButton("💰 Баланс", callback_data='balance')],
@@ -60,10 +62,8 @@ class ReferralBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Генерируем реферальную ссылку пользователя
         ref_link = f"https://t.me/{context.bot.username}?start={user.id}"
         
-        # Отправляем приветственное сообщение
         await update.message.reply_text(
             f"👋 Привет, {user.first_name}!\n\n"
             f"🎁 <b>Реферальная система:</b>\n"
@@ -79,7 +79,6 @@ class ReferralBot:
         )
     
     async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для проверки баланса"""
         user = update.effective_user
         if user.id in user_data:
             await update.message.reply_text(
@@ -90,13 +89,12 @@ class ReferralBot:
             await update.message.reply_text("Сначала используйте /start")
     
     async def referrals_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для просмотра рефералов"""
         user = update.effective_user
         if user.id in user_data:
             referrals = user_data[user.id]['referrals']
             if referrals:
                 ref_list = "\n".join([f"• @{user_data.get(ref_id, {}).get('username', 'Пользователь')}" 
-                                    for ref_id in referrals[:20]])  # Показываем первые 20
+                                    for ref_id in referrals[:20]])
                 await update.message.reply_text(
                     f"👥 Ваши рефералы ({len(referrals)}):\n{ref_list}"
                 )
@@ -106,10 +104,8 @@ class ReferralBot:
             await update.message.reply_text("Сначала используйте /start")
     
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик нажатий на кнопки"""
         query = update.callback_query
         await query.answer()
-        
         user = query.from_user
         
         if query.data == 'my_referrals':
@@ -159,7 +155,6 @@ class ReferralBot:
             )
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда помощи"""
         await update.message.reply_text(
             "ℹ️ <b>Помощь по боту:</b>\n\n"
             "🎁 <b>Реферальная система:</b>\n"
@@ -175,29 +170,17 @@ class ReferralBot:
         )
     
     def run(self):
-        """Запуск бота"""
-        # Создаем приложение
         application = Application.builder().token(self.token).build()
         
-        # Регистрируем обработчики
         application.add_handler(CommandHandler("start", self.start))
         application.add_handler(CommandHandler("balance", self.balance_command))
         application.add_handler(CommandHandler("referrals", self.referrals_command))
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CallbackQueryHandler(self.button_handler))
         
-        # Запускаем бота
         print("🤖 Бот запущен...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# Запуск бота
 if __name__ == '__main__':
-    # Ваш токен (не забудьте удалить перед публикацией)
-    TOKEN = "8126450707:AAE1grJdi8DReGgCHJdE2MzEa7ocNVClvq8"
-    
-    bot = ReferralBot(TOKEN)
+    bot = ReferralBot()
     bot.run()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
