@@ -1,143 +1,202 @@
-import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.types import Message
-from aiogram.enums import ParseMode
-
-# Настройки бота
-BOT_TOKEN = "8126450707:AAE1grJdi8DReGgCHJdE2MzEa7ocNVClvq8"  # Ваш токен
-ADMIN_ID = 7433757951  # Замените на ваш ID в Telegram
-
-# Хранилище данных (в реальном боте используйте БД)
-referral_data = {}  # user_id: {"referrals": [], "referrer": None}
+from typing import Dict
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
-dp = Dispatcher()
+# Хранение данных (в реальном проекте используйте базу данных)
+user_data = {}  # user_id: {'referrer_id': None, 'balance': 0, 'referrals': []}
 
-# Команда /start
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    user_id = message.from_user.id
-    
-    # Проверяем, есть ли реферальная ссылка
-    args = message.text.split()
-    if len(args) > 1:
-        referrer_id = args[1]
-        try:
-            referrer_id = int(referrer_id)
-            # Сохраняем реферера
-            if user_id not in referral_data:
-                referral_data[user_id] = {"referrals": [], "referrer": referrer_id}
-            
-            # Добавляем реферала к рефереру
-            if referrer_id in referral_data:
-                if user_id not in referral_data[referrer_id]["referrals"]:
-                    referral_data[referrer_id]["referrals"].append(user_id)
-            else:
-                referral_data[referrer_id] = {"referrals": [user_id], "referrer": None}
-            
-            await message.answer(
-                f"🎉 Вы зарегистрировались по реферальной ссылке пользователя {referrer_id}!\n\n"
-                "Используйте /help чтобы увидеть доступные команды"
-            )
-            
-            # Уведомляем реферера
-            try:
-                await bot.send_message(
-                    referrer_id,
-                    f"🎯 У вас новый реферал! Пользователь @{message.from_user.username or user_id} присоединился по вашей ссылке.\n"
-                    f"Всего рефералов: {len(referral_data[referrer_id]['referrals'])}"
-                )
-            except:
-                pass
-                
-        except ValueError:
-            await message.answer("Добро пожаловать! Используйте /help")
-    else:
-        # Обычный старт без реферальной ссылки
-        if user_id not in referral_data:
-            referral_data[user_id] = {"referrals": [], "referrer": None}
+class ReferralBot:
+    def __init__(self, token: str):
+        self.token = token
         
-        await message.answer(
-            f"👋 Привет, {message.from_user.first_name}!\n\n"
-            "Это реферальный бот. Приглашайте друзей и получайте бонусы!\n\n"
-            f"Ваша реферальная ссылка:\n"
-            f"https://t.me/{(await bot.get_me()).username}?start={user_id}\n\n"
-            "Используйте /ref чтобы увидеть статистику"
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /start"""
+        user = update.effective_user
+        referral_code = None
+        
+        # Проверяем реферальный код в аргументах
+        if context.args:
+            referral_code = context.args[0]
+        
+        # Регистрируем пользователя
+        if user.id not in user_data:
+            user_data[user.id] = {
+                'referrer_id': int(referral_code) if referral_code and referral_code.isdigit() else None,
+                'balance': 0,
+                'referrals': [],
+                'username': user.username
+            }
+            
+            # Если есть реферер, добавляем к его рефералам
+            if referral_code and referral_code.isdigit():
+                referrer_id = int(referral_code)
+                if referrer_id in user_data:
+                    user_data[referrer_id]['referrals'].append(user.id)
+                    user_data[referrer_id]['balance'] += 10  # Начисляем бонус
+                    
+                    # Уведомляем реферера
+                    try:
+                        await context.bot.send_message(
+                            chat_id=referrer_id,
+                            text=f"🎉 У вас новый реферал! @{user.username if user.username else 'Пользователь'}"
+                        )
+                    except:
+                        pass
+        
+        # Создаем клавиатуру с кнопками
+        keyboard = [
+            [InlineKeyboardButton("👥 Мои рефералы", callback_data='my_referrals')],
+            [InlineKeyboardButton("💰 Баланс", callback_data='balance')],
+            [InlineKeyboardButton("📢 Поделиться ссылкой", callback_data='share')],
+            [InlineKeyboardButton("ℹ️ Помощь", callback_data='help')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Генерируем реферальную ссылку пользователя
+        ref_link = f"https://t.me/{context.bot.username}?start={user.id}"
+        
+        # Отправляем приветственное сообщение
+        await update.message.reply_text(
+            f"👋 Привет, {user.first_name}!\n\n"
+            f"🎁 <b>Реферальная система:</b>\n"
+            f"• За каждого приглашенного друга: <b>10 монет</b>\n"
+            f"• Друг получает: <b>5 монет</b> на старт\n\n"
+            f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+            f"<code>{ref_link}</code>\n\n"
+            f"📊 <b>Статистика:</b>\n"
+            f"• Ваши рефералы: {len(user_data[user.id]['referrals'])}\n"
+            f"• Баланс: {user_data[user.id]['balance']} монет",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
         )
+    
+    async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда для проверки баланса"""
+        user = update.effective_user
+        if user.id in user_data:
+            await update.message.reply_text(
+                f"💰 Ваш баланс: {user_data[user.id]['balance']} монет\n"
+                f"👥 Рефералов: {len(user_data[user.id]['referrals'])}"
+            )
+        else:
+            await update.message.reply_text("Сначала используйте /start")
+    
+    async def referrals_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда для просмотра рефералов"""
+        user = update.effective_user
+        if user.id in user_data:
+            referrals = user_data[user.id]['referrals']
+            if referrals:
+                ref_list = "\n".join([f"• @{user_data.get(ref_id, {}).get('username', 'Пользователь')}" 
+                                    for ref_id in referrals[:20]])  # Показываем первые 20
+                await update.message.reply_text(
+                    f"👥 Ваши рефералы ({len(referrals)}):\n{ref_list}"
+                )
+            else:
+                await update.message.reply_text("У вас пока нет рефералов 😢")
+        else:
+            await update.message.reply_text("Сначала используйте /start")
+    
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик нажатий на кнопки"""
+        query = update.callback_query
+        await query.answer()
+        
+        user = query.from_user
+        
+        if query.data == 'my_referrals':
+            if user.id in user_data:
+                referrals = user_data[user.id]['referrals']
+                if referrals:
+                    ref_list = "\n".join([f"• @{user_data.get(ref_id, {}).get('username', 'Пользователь')}" 
+                                        for ref_id in referrals[:10]])
+                    await query.edit_message_text(
+                        text=f"👥 Ваши рефералы ({len(referrals)}):\n{ref_list}"
+                    )
+                else:
+                    await query.edit_message_text(text="У вас пока нет рефералов 😢")
+        
+        elif query.data == 'balance':
+            if user.id in user_data:
+                await query.edit_message_text(
+                    text=f"💰 Баланс: {user_data[user.id]['balance']} монет\n"
+                         f"👥 Рефералов: {len(user_data[user.id]['referrals'])}"
+                )
+        
+        elif query.data == 'share':
+            ref_link = f"https://t.me/{context.bot.username}?start={user.id}"
+            await query.edit_message_text(
+                text=f"📢 <b>Приглашайте друзей и получайте бонусы!</b>\n\n"
+                     f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+                     f"<code>{ref_link}</code>\n\n"
+                     f"🎁 <b>Бонусы:</b>\n"
+                     f"• Вы получаете: 10 монет за друга\n"
+                     f"• Друг получает: 5 монет на старт",
+                parse_mode='HTML'
+            )
+        
+        elif query.data == 'help':
+            await query.edit_message_text(
+                text="ℹ️ <b>Как работает бот:</b>\n\n"
+                     "1. Поделитесь своей реферальной ссылкой с друзьями\n"
+                     "2. Когда друг перейдет по вашей ссылке и нажмет START\n"
+                     "3. Вы получите 10 монет на баланс\n"
+                     "4. Ваш друг получит 5 монет на старт\n\n"
+                     "<b>Команды:</b>\n"
+                     "/start - Запустить бота\n"
+                     "/balance - Проверить баланс\n"
+                     "/referrals - Мои рефералы\n"
+                     "/help - Помощь",
+                parse_mode='HTML'
+            )
+    
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда помощи"""
+        await update.message.reply_text(
+            "ℹ️ <b>Помощь по боту:</b>\n\n"
+            "🎁 <b>Реферальная система:</b>\n"
+            "1. Получите свою реферальную ссылку\n"
+            "2. Поделитесь с друзьями\n"
+            "3. Получайте бонусы за каждого приглашенного!\n\n"
+            "<b>Доступные команды:</b>\n"
+            "/start - Запустить бота\n"
+            "/balance - Проверить баланс\n"
+            "/referrals - Мои рефералы\n"
+            "/help - Помощь",
+            parse_mode='HTML'
+        )
+    
+    def run(self):
+        """Запуск бота"""
+        # Создаем приложение
+        application = Application.builder().token(self.token).build()
+        
+        # Регистрируем обработчики
+        application.add_handler(CommandHandler("start", self.start))
+        application.add_handler(CommandHandler("balance", self.balance_command))
+        application.add_handler(CommandHandler("referrals", self.referrals_command))
+        application.add_handler(CommandHandler("help", self.help_command))
+        application.add_handler(CallbackQueryHandler(self.button_handler))
+        
+        # Запускаем бота
+        print("🤖 Бот запущен...")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# Команда /ref - статистика рефералов
-@dp.message(Command("ref"))
-async def cmd_ref(message: Message):
-    user_id = message.from_user.id
+# Запуск бота
+if __name__ == '__main__':
+    # Ваш токен (не забудьте удалить перед публикацией)
+    TOKEN = "8126450707:AAE1grJdi8DReGgCHJdE2MzEa7ocNVClvq8"
     
-    if user_id not in referral_data:
-        referral_data[user_id] = {"referrals": [], "referrer": None}
-    
-    ref_count = len(referral_data[user_id]["referrals"])
-    referrer = referral_data[user_id].get("referrer")
-    
-    text = (
-        f"📊 Ваша реферальная статистика:\n\n"
-        f"👥 Количество рефералов: {ref_count}\n"
-        f"🔗 Ваша реферальная ссылка:\n"
-        f"https://t.me/{(await bot.get_me()).username}?start={user_id}\n\n"
-    )
-    
-    if referrer:
-        text += f"🤝 Вас пригласил: пользователь {referrer}"
-    else:
-        text += "❌ Вас никто не пригласил"
-    
-    await message.answer(text)
-
-# Команда /help
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    help_text = (
-        "📚 Доступные команды:\n\n"
-        "/start - Запустить бота\n"
-        "/ref - Посмотреть реферальную статистику\n"
-        "/help - Показать это сообщение\n\n"
-        "🔗 Чтобы пригласить друга, просто отправьте ему вашу реферальную ссылку из команды /ref"
-    )
-    await message.answer(help_text)
-
-# Команда /admin для администратора
-@dp.message(Command("admin"))
-async def cmd_admin(message: Message):
-    global ADMIN_ID
-    
-    # Первый пользователь, написавший /admin становится администратором
-    if ADMIN_ID is None:
-        ADMIN_ID = message.from_user.id
-        await message.answer("✅ Вы назначены администратором!")
-    
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("❌ У вас нет прав администратора")
-        return
-    
-    # Статистика бота
-    total_users = len(referral_data)
-    total_refs = sum(len(data["referrals"]) for data in referral_data.values())
-    
-    admin_text = (
-        f"👑 Админ-панель\n\n"
-        f"👤 Всего пользователей: {total_users}\n"
-        f"🔗 Всего рефералов: {total_refs}\n"
-        f"📈 Среднее количество рефералов: {total_refs/total_users if total_users > 0 else 0:.2f}"
-    )
-    
-    await message.answer(admin_text)
-
-# Основная функция
-async def main():
-    print("Бот запущен...")
+    bot = ReferralBot(TOKEN)
+    bot.run()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
