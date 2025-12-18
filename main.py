@@ -6,7 +6,7 @@ from aiogram.types import Message
 from aiogram.enums import ParseMode
 
 # Настройки бота
-BOT_TOKEN = "8126450707:AAHQVuPw4cmJ9SppL6VOfcwd99UnuXNZvG4"  # Ваш токен
+BOT_TOKEN = "8126450707:AAE1grJdi8DReGgCHJdE2MzEa7ocNVClvq8"  # Ваш токен
 ADMIN_ID = 7433757951  # Замените на ваш ID в Telegram
 
 # Хранилище данных (в реальном боте используйте БД)
